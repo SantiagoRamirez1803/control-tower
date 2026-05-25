@@ -6,7 +6,6 @@ const supabase = createClient(
 );
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const GEMINI_KEY = process.env.GEMINI_KEY;
 const ZONA_EMOJI = { electrolineras: '⚡', papa: '🏢', maestria: '🎓', personal: '🌿' };
 
 async function sendMessage(chatId, text) {
@@ -19,7 +18,17 @@ async function sendMessage(chatId, text) {
 
 async function parseWithAI(text) {
   const today = new Date().toISOString().split('T')[0];
-  const prompt = `Eres el asistente de Pipe. Analiza el mensaje y responde SOLO JSON válido sin backticks ni texto extra.
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-3-5-haiku-20241022',
+      max_tokens: 500,
+      system: `Eres el asistente de Pipe (Juan Felipe). Analiza el mensaje y responde SOLO JSON sin backticks ni texto extra.
 
 Hoy: ${today}. Calcula fechas relativas correctamente.
 Zonas: electrolineras (empresa puntos carga EV), papa (empresa del papá), maestria (maestría datos), personal (médico/salidas/trámites).
@@ -32,28 +41,17 @@ Si es una CONSULTA (pendientes, hoy, semana, resumen):
 { "tipo": "consulta", "filtro": "hoy|semana|todo", "zona": "zona o null" }
 
 Si es /start o saludo:
-{ "tipo": "bienvenida" }
-
-Mensaje de Pipe: ${text}`;
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_KEY,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model: 'claude-3-5-haiku-20241022',
-      max_tokens: 500,
-      system: `Eres el asistente de Pipe. Analiza el mensaje y responde SOLO JSON sin backticks. Hoy: ${today}. Zonas: electrolineras, papa, maestria, personal. Prioridades: alta, media, baja. Si es tarea: { "tipo": "tarea", "titulo": "...", "zona": "...", "prioridad": "...", "fecha_hora": "ISO8601 o null", "notas": "... o null", "confirmacion": "mensaje corto" }. Si es consulta: { "tipo": "consulta", "filtro": "hoy|semana|todo", "zona": "zona o null" }. Si es saludo: { "tipo": "bienvenida" }`,
+{ "tipo": "bienvenida" }`,
       messages: [{ role: 'user', content: text }]
     })
   });
+
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
+  if (!data.content?.[0]?.text) throw new Error('Respuesta vacía: ' + JSON.stringify(data));
   const raw = data.content[0].text.replace(/```json\n?|\n?```/g, '').trim();
   return JSON.parse(raw);
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(200).json({ ok: true });
