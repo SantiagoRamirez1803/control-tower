@@ -46,8 +46,7 @@ export default function Dashboard() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const url = zone === 'all' ? '/api/tareas' : `/api/tareas?zona=${zone}`;
-    const res = await fetch(url);
+    const res = await fetch('/api/tareas');
     const data = await res.json();
     setTasks(Array.isArray(data) ? data : []);
     setLoading(false);
@@ -105,6 +104,7 @@ export default function Dashboard() {
     : `${MONTH_NAMES[calRef.getMonth()]} ${calRef.getFullYear()}`;
 
   const visible = tasks
+    .filter(t => zone === 'all' || t.zona === zone)
     .filter(t => !selDay || t.fecha_hora?.startsWith(selDay))
     .sort((a, b) => {
       if (a.estado === 'hecho' && b.estado !== 'hecho') return 1;
