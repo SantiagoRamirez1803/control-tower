@@ -24,7 +24,7 @@ async function parseWithAI(text) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_KEY,
+      'x-api-key': process.env.ANTHROPIC_KEY,
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
@@ -48,6 +48,8 @@ Si es /start o saludo:
     })
   });
   const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  if (!data.content || !data.content[0]) throw new Error('Respuesta vacía de AI: ' + JSON.stringify(data));
   const raw = data.content[0].text.replace(/```json\n?|\n?```/g, '').trim();
   return JSON.parse(raw);
 }
