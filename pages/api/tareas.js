@@ -15,6 +15,15 @@ export default async function handler(req, res) {
     return res.json(data);
   }
 
+  if (req.method === 'POST') {
+    const { titulo, zona, prioridad, fecha_hora, notas } = req.body;
+    const { data, error } = await supabase.from('tareas').insert({
+      titulo, zona, prioridad: prioridad || 'media', fecha_hora: fecha_hora || null, notas: notas || null
+    }).select().single();
+    if (error) return res.status(500).json({ error });
+    return res.json(data);
+  }
+
   if (req.method === 'PATCH') {
     const { id, estado } = req.body;
     const { error } = await supabase.from('tareas').update({ estado }).eq('id', id);
