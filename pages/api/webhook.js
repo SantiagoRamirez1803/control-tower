@@ -28,7 +28,7 @@ async function parseWithAI(text) {
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-3-5-haiku-20241022',
       max_tokens: 500,
       system: `Eres el asistente de Pipe (Juan Felipe). Analiza el mensaje y responde SOLO JSON sin backticks.
 
