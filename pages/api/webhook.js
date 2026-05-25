@@ -36,22 +36,24 @@ Si es /start o saludo:
 
 Mensaje de Pipe: ${text}`;
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 500 }
-      })
-    }
-  );
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-3-5-haiku-20241022',
+      max_tokens: 500,
+      system: `Eres el asistente de Pipe. Analiza el mensaje y responde SOLO JSON sin backticks. Hoy: ${today}. Zonas: electrolineras, papa, maestria, personal. Prioridades: alta, media, baja. Si es tarea: { "tipo": "tarea", "titulo": "...", "zona": "...", "prioridad": "...", "fecha_hora": "ISO8601 o null", "notas": "... o null", "confirmacion": "mensaje corto" }. Si es consulta: { "tipo": "consulta", "filtro": "hoy|semana|todo", "zona": "zona o null" }. Si es saludo: { "tipo": "bienvenida" }`,
+      messages: [{ role: 'user', content: text }]
+    })
+  });
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
-  const raw = data.candidates[0].content.parts[0].text.replace(/```json\n?|\n?```/g, '').trim();
+  const raw = data.content[0].text.replace(/```json\n?|\n?```/g, '').trim();
   return JSON.parse(raw);
-}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(200).json({ ok: true });
