@@ -9,9 +9,8 @@ const ZONES = {
 };
 
 const PRIO_COLOR = { alta: '#EF4444', media: '#F59E0B', baja: '#94A3B8' };
-const DAY_NAMES  = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+const DAY_NAMES   = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-
 const fmt = d => d.toISOString().split('T')[0];
 
 function getWeekDays(ref) {
@@ -21,26 +20,46 @@ function getWeekDays(ref) {
 }
 
 function getMonthDays(year, month) {
-  const first = new Date(year, month, 1);
-  const dow = first.getDay();
-  const start = new Date(first);
-  start.setDate(start.getDate() - (dow === 0 ? 6 : dow - 1));
+  const first = new Date(year, month, 1), dow = first.getDay();
+  const start = new Date(first); start.setDate(start.getDate() - (dow === 0 ? 6 : dow - 1));
   return Array.from({ length: 42 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
 }
 
-const EMPTY_FORM = { titulo: '', zona: 'electrolineras', prioridad: 'media', fecha: '', hora: '', notas: '' };
+function fmtDate(iso) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' });
+}
+function fmtTime(iso) {
+  if (!iso) return null;
+  const t = iso.split('T')[1];
+  if (!t || t === '00:00:00') return null;
+  return new Date(iso).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+}
+
+// Check if a day falls within a task's date range
+function taskCoversDay(task, ds) {
+  const start = task.fecha_hora?.split('T')[0];
+  const end   = task.fecha_fin?.split('T')[0];
+  if (!start) return false;
+  if (!end) return start === ds;
+  return ds >= start && ds <= end;
+}
+
+const EMPTY_FORM = { titulo: '', zona: 'electrolineras', prioridad: 'media', fecha: '', hora: '', fecha_fin: '', notas: '' };
 
 export default function Dashboard() {
-  const [tasks,    setTasks]    = useState([]);
-  const [zone,     setZone]     = useState('all');
-  const [selDay,   setSelDay]   = useState(null);
-  const [calView,  setCalView]  = useState('week');
-  const [calRef,   setCalRef]   = useState(new Date());
-  const [showAdd,  setShowAdd]  = useState(false);
-  const [form,     setForm]     = useState(EMPTY_FORM);
-  const [saving,   setSaving]   = useState(false);
-  const [fb,       setFb]       = useState(null);
-  const [loading,  setLoading]  = useState(true);
+  const [tasks,     setTasks]     = useState([]);
+  const [zone,      setZone]      = useState('all');
+  const [selDay,    setSelDay]    = useState(null);
+  const [calView,   setCalView]   = useState('week');
+  const [calRef,    setCalRef]    = useState(new Date());
+  const [showAdd,   setShowAdd]   = useState(false);
+  const [form,      setForm]      = useState(EMPTY_FORM);
+  const [saving,    setSaving]    = useState(false);
+  const [fb,        setFb]        = useState(null);
+  const [loading,   setLoading]   = useState(true);
+  const [editingId, setEditingId] = useState(null);
+  const [editForm,  setEditForm]  = useState({ fecha: '', hora: '', fecha_fin: '' });
 
   const TODAY = fmt(new Date());
 
@@ -50,7 +69,7 @@ export default function Dashboard() {
     const data = await res.json();
     setTasks(Array.isArray(data) ? data : []);
     setLoading(false);
-  }, [zone]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -60,20 +79,38 @@ export default function Dashboard() {
     if (!form.titulo.trim()) return flash('err', 'El título es obligatorio.');
     setSaving(true);
     const fecha_hora = form.fecha ? (form.hora ? `${form.fecha}T${form.hora}:00` : `${form.fecha}T00:00:00`) : null;
+    const fecha_fin  = form.fecha_fin ? `${form.fecha_fin}T00:00:00` : null;
     const res = await fetch('/api/tareas', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ titulo: form.titulo, zona: form.zona, prioridad: form.prioridad, fecha_hora, notas: form.notas || null })
+      body: JSON.stringify({ titulo: form.titulo, zona: form.zona, prioridad: form.prioridad, fecha_hora, fecha_fin, notas: form.notas || null })
     });
-    if (res.ok) {
-      flash('ok', 'Tarea agregada.');
-      setForm(EMPTY_FORM);
-      setShowAdd(false);
-      load();
-    } else {
-      flash('err', 'Error al guardar. Intenta de nuevo.');
-    }
+    if (res.ok) { flash('ok', 'Tarea agregada.'); setForm(EMPTY_FORM); setShowAdd(false); load(); }
+    else flash('err', 'Error al guardar.');
     setSaving(false);
+  };
+
+  const openEdit = (task) => {
+    setEditingId(task.id);
+    setEditForm({
+      fecha:     task.fecha_hora ? task.fecha_hora.split('T')[0] : '',
+      hora:      task.fecha_hora && task.fecha_hora.split('T')[1] !== '00:00:00' ? task.fecha_hora.split('T')[1]?.slice(0,5) : '',
+      fecha_fin: task.fecha_fin  ? task.fecha_fin.split('T')[0]  : '',
+    });
+  };
+
+  const handleEditSave = async (id) => {
+    const { fecha, hora, fecha_fin } = editForm;
+    const fecha_hora = fecha ? (hora ? `${fecha}T${hora}:00` : `${fecha}T00:00:00`) : null;
+    const fin        = fecha_fin ? `${fecha_fin}T00:00:00` : null;
+    await fetch('/api/tareas', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, fecha_hora, fecha_fin: fin })
+    });
+    setEditingId(null);
+    load();
+    flash('ok', 'Fecha actualizada.');
   };
 
   const updateEstado = async (id, estado) => {
@@ -89,13 +126,11 @@ export default function Dashboard() {
 
   const pending = tasks.filter(t => t.estado !== 'hecho');
   const overdue = pending.filter(t => t.fecha_hora && t.fecha_hora.split('T')[0] < TODAY);
-
   const calDays = calView === 'week' ? getWeekDays(calRef) : getMonthDays(calRef.getFullYear(), calRef.getMonth());
 
-  const navCal = (dir) => {
+  const navCal = dir => {
     const d = new Date(calRef);
-    if (calView === 'week') d.setDate(d.getDate() + dir * 7);
-    else d.setMonth(d.getMonth() + dir);
+    calView === 'week' ? d.setDate(d.getDate() + dir * 7) : d.setMonth(d.getMonth() + dir);
     setCalRef(d);
   };
 
@@ -105,7 +140,7 @@ export default function Dashboard() {
 
   const visible = tasks
     .filter(t => zone === 'all' || t.zona === zone)
-    .filter(t => !selDay || t.fecha_hora?.startsWith(selDay))
+    .filter(t => !selDay || taskCoversDay(t, selDay))
     .sort((a, b) => {
       if (a.estado === 'hecho' && b.estado !== 'hecho') return 1;
       if (a.estado !== 'hecho' && b.estado === 'hecho') return -1;
@@ -131,12 +166,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* FEEDBACK */}
-      {fb && (
-        <div style={{...S.fb, background: fb.type==='ok'?'#ECFDF5':'#FEF2F2', color: fb.type==='ok'?'#065F46':'#DC2626', border: `1px solid ${fb.type==='ok'?'#6EE7B7':'#FECACA'}`}}>
-          {fb.type==='ok'?'✓ ':'✕ '}{fb.msg}
-        </div>
-      )}
+      {fb && <div style={{...S.fb,background:fb.type==='ok'?'#ECFDF5':'#FEF2F2',color:fb.type==='ok'?'#065F46':'#DC2626',border:`1px solid ${fb.type==='ok'?'#6EE7B7':'#FECACA'}`}}>{fb.type==='ok'?'✓ ':'✕ '}{fb.msg}</div>}
 
       {/* ZONE CARDS */}
       <div style={S.zoneGrid}>
@@ -151,8 +181,8 @@ export default function Dashboard() {
               boxShadow: on ? `0 0 0 2px ${z.color}40` : '0 1px 3px rgba(0,0,0,0.06)',
             }}>
               <div style={S.zIcon}>{z.icon}</div>
-              <div style={{...S.zLabel, color: on ? z.color : '#475569'}}>{z.label}</div>
-              <div style={{...S.zCount, color: on ? z.color : '#94A3B8'}}>{cnt}</div>
+              <div style={{...S.zLabel,color:on?z.color:'#475569'}}>{z.label}</div>
+              <div style={{...S.zCount,color:on?z.color:'#94A3B8'}}>{cnt}</div>
             </button>
           );
         })}
@@ -166,96 +196,111 @@ export default function Dashboard() {
           <button style={S.nav} onClick={() => navCal(1)}>›</button>
           {fmt(calRef) !== TODAY && <button style={{...S.nav,color:'#059669',borderColor:'#6EE7B7'}} onClick={() => { setCalRef(new Date()); setSelDay(null); }}>Hoy</button>}
           <div style={S.viewToggle}>
-            <button onClick={() => setCalView('week')} style={{...S.viewBtn, background: calView==='week'?'#1E293B':'transparent', color: calView==='week'?'#fff':'#64748B'}}>Sem</button>
-            <button onClick={() => setCalView('month')} style={{...S.viewBtn, background: calView==='month'?'#1E293B':'transparent', color: calView==='month'?'#fff':'#64748B'}}>Mes</button>
+            <button onClick={() => setCalView('week')} style={{...S.viewBtn,background:calView==='week'?'#1E293B':'transparent',color:calView==='week'?'#fff':'#64748B'}}>Sem</button>
+            <button onClick={() => setCalView('month')} style={{...S.viewBtn,background:calView==='month'?'#1E293B':'transparent',color:calView==='month'?'#fff':'#64748B'}}>Mes</button>
           </div>
         </div>
-
-        {/* DAY HEADERS for month view */}
         {calView === 'month' && (
           <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,marginBottom:4}}>
             {DAY_NAMES.map(d => <div key={d} style={{fontSize:9,fontWeight:700,color:'#94A3B8',textAlign:'center',padding:'4px 0'}}>{d}</div>)}
           </div>
         )}
-
-        <div style={{display:'grid', gridTemplateColumns:`repeat(7,1fr)`, gap: calView==='month'?2:4}}>
-          {(calView === 'week' ? calDays : calDays).map((day, i) => {
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:calView==='month'?2:4}}>
+          {calDays.map((day, i) => {
             const ds = fmt(day);
             const isToday  = ds === TODAY;
             const isSel    = selDay === ds;
-            const isOtherMonth = calView === 'month' && day.getMonth() !== calRef.getMonth();
-            const dayTasks = tasks.filter(t => t.fecha_hora?.startsWith(ds) && t.estado !== 'hecho');
-            const hasOver  = dayTasks.some(t => ds < TODAY);
-
+            const isOther  = calView === 'month' && day.getMonth() !== calRef.getMonth();
+            const dayTasks = tasks.filter(t => taskCoversDay(t, ds) && t.estado !== 'hecho');
             return (
               <button key={ds} onClick={() => setSelDay(isSel ? null : ds)} style={{
                 ...S.calCell,
                 minHeight: calView === 'month' ? 52 : 62,
                 background: isSel ? '#ECFDF5' : isToday ? '#F0FDF4' : '#FFFFFF',
                 borderColor: isSel ? '#059669' : isToday ? '#6EE7B7' : '#E2E8F0',
-                opacity: isOtherMonth ? 0.35 : 1,
+                opacity: isOther ? 0.35 : 1,
               }}>
                 {calView === 'week' && <span style={{fontSize:9,fontWeight:700,color:isToday?'#059669':'#94A3B8'}}>{DAY_NAMES[i]}</span>}
-                <span style={{fontSize: calView==='month'?13:15, fontWeight:700, color: isSel?'#059669':isToday?'#065F46':'#334155'}}>{day.getDate()}</span>
+                <span style={{fontSize:calView==='month'?13:15,fontWeight:700,color:isSel?'#059669':isToday?'#065F46':'#334155'}}>{day.getDate()}</span>
                 <div style={S.dots}>
-                  {dayTasks.slice(0,3).map((t,j) => <div key={j} style={{...S.dot, background: (ZONES[t.zona]||ZONES.personal).color}} />)}
+                  {dayTasks.slice(0,3).map((t,j) => <div key={j} style={{...S.dot,background:(ZONES[t.zona]||ZONES.personal).color}} />)}
                   {dayTasks.length > 3 && <div style={{...S.dot,background:'#CBD5E1'}}/>}
                 </div>
               </button>
             );
           })}
         </div>
-        {selDay && (
-          <button onClick={() => setSelDay(null)} style={S.clearDay}>✕ Ver todas las tareas</button>
-        )}
+        {selDay && <button onClick={() => setSelDay(null)} style={S.clearDay}>✕ Ver todas las tareas</button>}
       </div>
 
       {/* TASK LIST */}
       <div style={S.list}>
         {loading && <div style={S.empty}>Cargando tareas...</div>}
         {!loading && visible.length === 0 && (
-          <div style={S.empty}>{selDay ? `Sin tareas el ${selDay}.` : 'Sin tareas. Agrega una con el botón de arriba o desde Telegram.'}</div>
+          <div style={S.empty}>{selDay ? `Sin tareas el ${selDay}.` : 'Sin tareas. Agrega una arriba o desde Telegram.'}</div>
         )}
         {visible.map(t => {
-          const z = ZONES[t.zona] || ZONES.personal;
-          const ds = t.fecha_hora?.split('T')[0];
+          const z    = ZONES[t.zona] || ZONES.personal;
+          const ds   = t.fecha_hora?.split('T')[0];
           const isOver   = ds && ds < TODAY && t.estado !== 'hecho';
           const isToday2 = ds === TODAY && t.estado !== 'hecho';
           const done     = t.estado === 'hecho';
+          const hasRange = t.fecha_fin && t.fecha_fin !== t.fecha_hora;
+          const isEditing = editingId === t.id;
+
           return (
-            <div key={t.id} className="tc" style={{
-              ...S.card,
-              borderLeftColor: done ? '#E2E8F0' : z.color,
-              opacity: done ? 0.5 : 1,
-            }}>
-              <div style={{ flex: 1 }}>
+            <div key={t.id} className="tc" style={{...S.card, borderLeftColor: done?'#E2E8F0':z.color, opacity: done?0.5:1}}>
+              <div style={{flex:1}}>
                 <div style={S.cardTop}>
-                  {/* Zona + Prioridad */}
-                  <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
-                    <span style={{...S.tag, background: z.bg, color: z.color, border: `1px solid ${z.border}`}}>{z.icon} {z.label}</span>
-                    <span style={{...S.tag, background: '#F8FAFC', color: PRIO_COLOR[t.prioridad], border:`1px solid ${PRIO_COLOR[t.prioridad]}30`}}>● {t.prioridad}</span>
+                  <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+                    <span style={{...S.tag,background:z.bg,color:z.color,border:`1px solid ${z.border}`}}>{z.icon} {z.label}</span>
+                    <span style={{...S.tag,background:'#F8FAFC',color:PRIO_COLOR[t.prioridad],border:`1px solid ${PRIO_COLOR[t.prioridad]}30`}}>● {t.prioridad}</span>
+
+                    {/* FECHA / RANGO */}
                     {t.fecha_hora && (
-                      <span style={{...S.tag, background: isOver?'#FEF2F2':isToday2?'#FFFBEB':'#F8FAFC', color: isOver?'#DC2626':isToday2?'#D97706':'#64748B', border: `1px solid ${isOver?'#FECACA':isToday2?'#FDE68A':'#E2E8F0'}`}}>
-                        {isOver?'⚠ vencida':isToday2?'⏰ hoy':'📅 '}{!isOver&&!isToday2 && new Date(t.fecha_hora).toLocaleDateString('es-CO',{day:'numeric',month:'short'})}
-                        {t.fecha_hora.includes('T') && t.fecha_hora.split('T')[1] !== '00:00:00' && ` ${new Date(t.fecha_hora).toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'})}`}
+                      <span style={{...S.tag,background:isOver?'#FEF2F2':isToday2?'#FFFBEB':'#F8FAFC',color:isOver?'#DC2626':isToday2?'#D97706':'#64748B',border:`1px solid ${isOver?'#FECACA':isToday2?'#FDE68A':'#E2E8F0'}`}}>
+                        {isOver?'⚠ ':isToday2?'⏰ ':'📅 '}
+                        {fmtDate(t.fecha_hora)}{fmtTime(t.fecha_hora) ? ` ${fmtTime(t.fecha_hora)}` : ''}
+                        {hasRange && ` → ${fmtDate(t.fecha_fin)}`}
                       </span>
                     )}
                   </div>
-                  {/* Estado selector */}
-                  <select value={t.estado} onChange={e => updateEstado(t.id, e.target.value)} style={S.sel} onClick={e => e.stopPropagation()}>
-                    <option value="pendiente">Pendiente</option>
-                    <option value="en_progreso">En progreso</option>
-                    <option value="hecho">✅ Hecho</option>
-                  </select>
+                  <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                    <button onClick={() => isEditing ? setEditingId(null) : openEdit(t)} style={{...S.editBtn, color: isEditing?'#7C3AED':'#94A3B8', background: isEditing?'#F5F3FF':'transparent', border: isEditing?'1px solid #C4B5FD':'1px solid #E2E8F0'}}>✏ {isEditing?'Cerrar':'Editar fecha'}</button>
+                    <select value={t.estado} onChange={e => updateEstado(t.id, e.target.value)} style={S.sel}>
+                      <option value="pendiente">Pendiente</option>
+                      <option value="en_progreso">En progreso</option>
+                      <option value="hecho">✅ Hecho</option>
+                    </select>
+                  </div>
                 </div>
 
-                {/* Título */}
-                <div style={{...S.taskTitle, textDecoration: done?'line-through':'none', color: done?'#94A3B8':'#1E293B'}}>
-                  {t.titulo}
-                </div>
-
-                {/* Notas */}
+                <div style={{...S.taskTitle,textDecoration:done?'line-through':'none',color:done?'#94A3B8':'#1E293B'}}>{t.titulo}</div>
                 {t.notas && <div style={S.notes}>{t.notas}</div>}
+
+                {/* INLINE EDIT PANEL */}
+                {isEditing && (
+                  <div style={S.editPanel}>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+                      <div>
+                        <div style={S.editLabel}>Fecha inicio</div>
+                        <input type="date" value={editForm.fecha} onChange={e => setEditForm({...editForm,fecha:e.target.value})} style={S.editField} />
+                      </div>
+                      <div>
+                        <div style={S.editLabel}>Hora</div>
+                        <input type="time" value={editForm.hora} onChange={e => setEditForm({...editForm,hora:e.target.value})} style={S.editField} />
+                      </div>
+                      <div>
+                        <div style={S.editLabel}>Fecha fin (rango)</div>
+                        <input type="date" value={editForm.fecha_fin} onChange={e => setEditForm({...editForm,fecha_fin:e.target.value})} style={S.editField} />
+                      </div>
+                    </div>
+                    <div style={{display:'flex',gap:8,marginTop:8}}>
+                      <button onClick={() => handleEditSave(t.id)} style={S.saveEditBtn}>✓ Guardar</button>
+                      <button onClick={() => setEditForm({...editForm,fecha:'',hora:'',fecha_fin:''})} style={S.clearEditBtn}>✕ Limpiar fechas</button>
+                    </div>
+                  </div>
+                )}
               </div>
               <button className="db" onClick={() => deleteTask(t.id)} style={S.del}>🗑</button>
             </div>
@@ -265,7 +310,7 @@ export default function Dashboard() {
 
       {/* ADD TASK MODAL */}
       {showAdd && (
-        <div style={S.overlay} onClick={e => e.target === e.currentTarget && setShowAdd(false)}>
+        <div style={S.overlay} onClick={e => e.target===e.currentTarget && setShowAdd(false)}>
           <div style={S.modal}>
             <div style={S.mHead}>
               <span style={S.mTitle}>➕ Nueva tarea</span>
@@ -273,8 +318,7 @@ export default function Dashboard() {
             </div>
             <div style={S.mBody}>
               <label style={S.label}>Título *</label>
-              <input value={form.titulo} onChange={e => setForm({...form,titulo:e.target.value})}
-                placeholder="¿Qué hay que hacer?" style={S.field} />
+              <input value={form.titulo} onChange={e => setForm({...form,titulo:e.target.value})} placeholder="¿Qué hay que hacer?" style={S.field} />
 
               <label style={S.label}>Zona</label>
               <select value={form.zona} onChange={e => setForm({...form,zona:e.target.value})} style={S.field}>
@@ -292,22 +336,18 @@ export default function Dashboard() {
               </select>
 
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-                <div>
-                  <label style={S.label}>Fecha</label>
-                  <input type="date" value={form.fecha} onChange={e => setForm({...form,fecha:e.target.value})} style={S.field} />
-                </div>
-                <div>
-                  <label style={S.label}>Hora</label>
-                  <input type="time" value={form.hora} onChange={e => setForm({...form,hora:e.target.value})} style={S.field} />
-                </div>
+                <div><label style={S.label}>Fecha inicio</label><input type="date" value={form.fecha} onChange={e => setForm({...form,fecha:e.target.value})} style={S.field} /></div>
+                <div><label style={S.label}>Hora</label><input type="time" value={form.hora} onChange={e => setForm({...form,hora:e.target.value})} style={S.field} /></div>
               </div>
 
+              <label style={S.label}>Fecha fin <span style={{fontWeight:400,color:'#94A3B8'}}>(opcional — para rangos)</span></label>
+              <input type="date" value={form.fecha_fin} onChange={e => setForm({...form,fecha_fin:e.target.value})} style={S.field} />
+
               <label style={S.label}>Descripción / Notas</label>
-              <textarea value={form.notas} onChange={e => setForm({...form,notas:e.target.value})}
-                placeholder="Detalles adicionales, contexto, etc." style={{...S.field,minHeight:80,resize:'vertical'}} />
+              <textarea value={form.notas} onChange={e => setForm({...form,notas:e.target.value})} placeholder="Detalles, contexto, etc." style={{...S.field,minHeight:70,resize:'vertical'}} />
 
               <button onClick={handleAdd} disabled={saving} style={{...S.saveBtn,opacity:saving?0.6:1}}>
-                {saving ? 'Guardando...' : '✓ Guardar tarea'}
+                {saving?'Guardando...':'✓ Guardar tarea'}
               </button>
             </div>
           </div>
@@ -323,15 +363,13 @@ const CSS = `
   body { margin: 0; background: #F1F5F9; }
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
-  input[type=date]::-webkit-calendar-picker-indicator { opacity: 0.5; }
   .tc:hover .db { opacity: 1 !important; }
   button { cursor: pointer; transition: all 0.15s; }
   button:active { transform: scale(0.97); }
-  select { cursor: pointer; }
 `;
 
 const S = {
-  root:{fontFamily:"'Inter',sans-serif",background:'#F1F5F9',minHeight:'100vh',color:'#1E293B',padding:'20px 16px',maxWidth:680,margin:'0 auto',display:'flex',flexDirection:'column',gap:14},
+  root:{fontFamily:"'Inter',sans-serif",background:'#F1F5F9',minHeight:'100vh',color:'#1E293B',padding:'20px 16px',maxWidth:700,margin:'0 auto',display:'flex',flexDirection:'column',gap:14},
   header:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:10},
   logo:{fontSize:20,fontWeight:700,color:'#1E293B',letterSpacing:'-0.02em'},
   sub:{fontSize:11,color:'#94A3B8',marginTop:2,textTransform:'capitalize'},
@@ -363,6 +401,12 @@ const S = {
   taskTitle:{fontSize:14,fontWeight:600,color:'#1E293B',lineHeight:1.4,marginBottom:6},
   notes:{fontSize:12,color:'#64748B',lineHeight:1.5,background:'#F8FAFC',borderRadius:6,padding:'6px 10px'},
   sel:{fontSize:11,background:'#F8FAFC',border:'1px solid #E2E8F0',borderRadius:8,color:'#475569',padding:'4px 6px',fontFamily:'inherit',flexShrink:0},
+  editBtn:{fontSize:10,borderRadius:8,padding:'4px 8px',fontWeight:500,fontFamily:'inherit',cursor:'pointer'},
+  editPanel:{marginTop:10,background:'#F8FAFC',border:'1px solid #E2E8F0',borderRadius:10,padding:'12px'},
+  editLabel:{fontSize:10,fontWeight:600,color:'#64748B',marginBottom:4},
+  editField:{width:'100%',background:'#FFFFFF',border:'1px solid #E2E8F0',borderRadius:8,padding:'7px 10px',color:'#1E293B',fontSize:12,fontFamily:'inherit',outline:'none'},
+  saveEditBtn:{background:'#059669',border:'none',borderRadius:8,color:'#fff',padding:'7px 14px',fontSize:12,fontWeight:600,fontFamily:'inherit'},
+  clearEditBtn:{background:'none',border:'1px solid #E2E8F0',borderRadius:8,color:'#94A3B8',padding:'7px 12px',fontSize:12,fontFamily:'inherit'},
   del:{background:'none',border:'none',fontSize:14,opacity:0,padding:'2px 4px',flexShrink:0,transition:'opacity 0.15s'},
   overlay:{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',backdropFilter:'blur(4px)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:100,padding:'16px'},
   modal:{background:'#FFFFFF',borderRadius:20,width:'100%',maxWidth:560,maxHeight:'90vh',overflowY:'auto',boxShadow:'0 20px 60px rgba(0,0,0,0.2)'},
