@@ -6,7 +6,8 @@ const supabase = createClient(
 );
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const ZONA_EMOJI = { electrolineras: '⚡', papa: '🏢', maestria: '🎓', personal: '🌿' };
+const GROQ_KEY       = process.env.GROQ_KEY;
+const ZONA_EMOJI     = { electrolineras: '⚡', papa: '🏢', maestria: '🎓', personal: '🌿' };
 
 async function sendMessage(chatId, text) {
   await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
@@ -18,20 +19,23 @@ async function sendMessage(chatId, text) {
 
 async function parseWithAI(text) {
   const today = new Date().toISOString().split('T')[0];
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_KEY,
-      'anthropic-version': '2023-06-01'
+      'Authorization': `Bearer ${GROQ_KEY}`
     },
     body: JSON.stringify({
-      model: 'claude-3-5-haiku-20241022',
+      model: 'llama-3.3-70b-versatile',
+      temperature: 0.1,
       max_tokens: 500,
-      system: `Eres el asistente de Pipe (Juan Felipe). Analiza el mensaje y responde SOLO JSON sin backticks ni texto extra.
+      messages: [
+        {
+          role: 'system',
+          content: `Eres el asistente de Pipe (Juan Felipe). Analiza el mensaje y responde SOLO JSON sin backticks ni texto extra.
 
 Hoy: ${today}. Calcula fechas relativas correctamente.
-Zonas: electrolineras (empresa puntos carga EV), papa (empresa del papá), maestria (maestría datos), personal (médico/salidas/trámites).
+Zonas: electrolineras (empresa ASFALTECH Energy, puntos carga EV), papa (Ayudas Familia, empresa del papá), maestria (maestría datos), personal (médico/salidas/trámites).
 Prioridades: alta, media, baja.
 
 Si es una TAREA nueva:
@@ -41,15 +45,15 @@ Si es una CONSULTA (pendientes, hoy, semana, resumen):
 { "tipo": "consulta", "filtro": "hoy|semana|todo", "zona": "zona o null" }
 
 Si es /start o saludo:
-{ "tipo": "bienvenida" }`,
-      messages: [{ role: 'user', content: text }]
+{ "tipo": "bienvenida" }`
+        },
+        { role: 'user', content: text }
+      ]
     })
   });
-
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
-  if (!data.content?.[0]?.text) throw new Error('Respuesta vacía: ' + JSON.stringify(data));
-  const raw = data.content[0].text.replace(/```json\n?|\n?```/g, '').trim();
+  const raw = data.choices[0].message.content.replace(/```json\n?|\n?```/g, '').trim();
   return JSON.parse(raw);
 }
 
@@ -59,7 +63,7 @@ export default async function handler(req, res) {
   if (!message?.text) return res.status(200).json({ ok: true });
 
   const chatId = message.chat.id;
-  const text = message.text;
+  const text   = message.text;
 
   try {
     const parsed = await parseWithAI(text);
@@ -78,11 +82,11 @@ export default async function handler(req, res) {
 
     if (parsed.tipo === 'tarea') {
       const { error } = await supabase.from('tareas').insert({
-        titulo: parsed.titulo,
-        zona: parsed.zona,
-        prioridad: parsed.prioridad || 'media',
+        titulo:     parsed.titulo,
+        zona:       parsed.zona,
+        prioridad:  parsed.prioridad || 'media',
         fecha_hora: parsed.fecha_hora || null,
-        notas: parsed.notas || null,
+        notas:      parsed.notas || null,
       });
       if (error) throw error;
       const emoji = ZONA_EMOJI[parsed.zona] || '✓';
@@ -93,10 +97,10 @@ export default async function handler(req, res) {
     }
 
     if (parsed.tipo === 'consulta') {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const nextWeek = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+      const todayStr  = new Date().toISOString().split('T')[0];
+      const nextWeek  = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
       let query = supabase.from('tareas').select('*').neq('estado', 'hecho').order('fecha_hora', { ascending: true, nullsFirst: false });
-      if (parsed.filtro === 'hoy') query = query.lte('fecha_hora', todayStr + 'T23:59:59');
+      if (parsed.filtro === 'hoy')    query = query.lte('fecha_hora', todayStr + 'T23:59:59');
       if (parsed.filtro === 'semana') query = query.lte('fecha_hora', nextWeek + 'T23:59:59');
       if (parsed.zona) query = query.eq('zona', parsed.zona);
       const { data: tareas } = await query.limit(15);
