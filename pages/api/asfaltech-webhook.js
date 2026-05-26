@@ -33,7 +33,7 @@ Hoy: ${today}. El mensaje lo envía: ${authorName}.
 Analiza el mensaje y responde SOLO JSON sin backticks.
 
 Si es una TAREA nueva:
-{ "tipo": "tarea", "titulo": "...", "prioridad": "alta|media|baja", "fecha_hora": "ISO8601 o null", "notas": "... o null", "confirmacion": "mensaje corto" }
+{ "tipo": "tarea", "titulo": "...", "prioridad": "alta|media|baja", "fecha_hora": "ISO8601 fecha inicio o null", "fecha_fin": "ISO8601 fecha fin o null (solo si hay rango)", "notas": "... o null", "confirmacion": "mensaje corto" }
 
 Si es una CONSULTA (pendientes, hoy, semana, qué hay):
 { "tipo": "consulta", "filtro": "hoy|semana|todo" }
@@ -81,6 +81,7 @@ export default async function handler(req, res) {
         zona:       'electrolineras',
         prioridad:  parsed.prioridad || 'media',
         fecha_hora: parsed.fecha_hora || null,
+        fecha_fin:  parsed.fecha_fin  || null,
         notas:      parsed.notas ? `[${authorName}] ${parsed.notas}` : `Agregado por ${authorName}`,
       });
       if (error) throw error;
