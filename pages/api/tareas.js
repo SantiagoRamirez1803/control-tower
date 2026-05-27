@@ -16,12 +16,13 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    const { titulo, zona, prioridad, fecha_hora, fecha_fin, notas } = req.body;
+    const { titulo, zona, prioridad, fecha_hora, fecha_fin, notas, remind_minutes } = req.body;
     const { data, error } = await supabase.from('tareas').insert({
       titulo, zona, prioridad: prioridad || 'media',
       fecha_hora: fecha_hora || null,
       fecha_fin:  fecha_fin  || null,
       notas:      notas      || null,
+      remind_minutes: remind_minutes ? parseInt(remind_minutes) : null,
     }).select().single();
     if (error) return res.status(500).json({ error });
     return res.json(data);
