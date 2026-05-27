@@ -70,6 +70,7 @@ export default function Dashboard() {
   const [calRef,     setCalRef]     = useState(new Date());
   const [showAdd,    setShowAdd]    = useState(false);
   const [form,       setForm]       = useState(EMPTY_FORM);
+  const [remindMin,  setRemindMin]  = useState('');
   const [saving,     setSaving]     = useState(false);
   const [fb,         setFb]         = useState(null);
   const [loading,    setLoading]    = useState(true);
@@ -140,9 +141,9 @@ export default function Dashboard() {
     const res = await fetch('/api/tareas', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ titulo: form.titulo, zona: form.zona, prioridad: form.prioridad, fecha_hora, fecha_fin, notas: form.notas || null, remind_minutes: form.remind_minutes ? parseInt(form.remind_minutes) : null })
+      body: JSON.stringify({ titulo: form.titulo, zona: form.zona, prioridad: form.prioridad, fecha_hora, fecha_fin, notas: form.notas || null, remind_minutes: remindMin ? parseInt(remindMin) : null })
     });
-    if (res.ok) { flash('ok', 'Tarea agregada.'); setForm(EMPTY_FORM); setShowAdd(false); load(); }
+    if (res.ok) { flash('ok', 'Tarea agregada.'); setForm(EMPTY_FORM); setRemindMin(''); setShowAdd(false); load(); }
     else flash('err', 'Error al guardar.');
     setSaving(false);
   };
@@ -342,7 +343,7 @@ export default function Dashboard() {
                   <div style={{marginTop:6}}><div style={S.editLabel}>Fecha fin</div><input type="date" value={editForm.fecha_fin} onChange={e => setEditForm({...editForm,fecha_fin:e.target.value})} style={S.editField}/></div>
                   <div style={{marginTop:6}}>
                     <div style={S.editLabel}>🔔 Recordatorio (minutos antes)</div>
-                    <select value={editForm.remind_minutes} onChange={e => setEditForm({...editForm,remind_minutes:e.target.value})} style={S.editField}>
+                    <select value={remindMin} onChange={e => setRemindMin(e.target.value)} style={S.field}>
                       <option value="">Sin recordatorio</option>
                       <option value="10">10 minutos antes</option>
                       <option value="15">15 minutos antes</option>
@@ -350,7 +351,7 @@ export default function Dashboard() {
                       <option value="60">1 hora antes</option>
                       <option value="120">2 horas antes</option>
                       <option value="1440">1 día antes</option>
-                    </select>
+                  </select>
                   </div>
                   <div style={{display:'flex',gap:6,marginTop:8}}>
                     <button onClick={() => handleEditSave(t.id)} style={S.saveEditBtn}>✓ Guardar</button>
