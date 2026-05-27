@@ -406,7 +406,10 @@ export default function Dashboard() {
               <label style={S.label}>Fecha fin <span style={{fontWeight:400,color:'#94A3B8'}}>(opcional)</span></label>
               <input type="date" value={form.fecha_fin} onChange={e => setForm({...form,fecha_fin:e.target.value})} style={S.field}/>
               <label style={S.label}>🔔 Recordatorio</label>
-              <select value={form.remind_minutes} onChange={e => setForm({...form,remind_minutes:e.target.value})} style={S.field}>
+              <select value={form.remind_minutes || ''} onChange={e => {
+                const val = e.target.value;
+                setForm(prev => ({...prev, remind_minutes: val}));
+              }} style={S.field}>
                 <option value="">Sin recordatorio</option>
                 <option value="10">10 minutos antes</option>
                 <option value="15">15 minutos antes</option>
