@@ -402,5 +402,3 @@ const S = {
   field:{width:'100%',background:'#F8FAFC',border:'1px solid #E2E8F0',borderRadius:10,padding:'10px 12px',color:'#1E293B',fontSize:13,fontFamily:'inherit',outline:'none'},
   saveBtn:{background:'#1E293B',border:'none',borderRadius:12,color:'#fff',padding:'13px',fontSize:14,fontWeight:600,fontFamily:'inherit',width:'100%',marginTop:4},
 };
-  saveBtn:{background:'#1E293B',border:'none',borderRadius:12,color:'#fff',padding:'13px',fontSize:14,fontWeight:600,fontFamily:'inherit',width:'100%',marginTop:4},
-};
