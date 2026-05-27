@@ -21,18 +21,19 @@ export default async function handler(req, res) {
       titulo, zona, prioridad: prioridad || 'media',
       fecha_hora: fecha_hora || null,
       fecha_fin:  fecha_fin  || null,
-      notas: notas || null
+      notas:      notas      || null,
     }).select().single();
     if (error) return res.status(500).json({ error });
     return res.json(data);
   }
 
   if (req.method === 'PATCH') {
-    const { id, estado, fecha_hora, fecha_fin } = req.body;
+    const { id, estado, fecha_hora, fecha_fin, notas } = req.body;
     const updates = {};
     if (estado     !== undefined) updates.estado     = estado;
     if (fecha_hora !== undefined) updates.fecha_hora = fecha_hora;
     if (fecha_fin  !== undefined) updates.fecha_fin  = fecha_fin;
+    if (notas      !== undefined) updates.notas      = notas;
     const { error } = await supabase.from('tareas').update(updates).eq('id', id);
     if (error) return res.status(500).json({ error });
     return res.json({ ok: true });
