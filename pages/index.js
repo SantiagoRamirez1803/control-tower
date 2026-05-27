@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
+const VAPID_PUBLIC = 'BD1NnKTxkP7R2MjVuw8qUatakSdYmo8jaa-fC-xd_WivA_3_gqh6-1_gGO7621XsSfF73OObjNIcHw_0IApxS00';
+
 const ZONES = {
   all:            { label: 'Todo',             icon: '📋', color: '#64748B', bg: '#F1F5F9', border: '#CBD5E1' },
   electrolineras: { label: 'ASFALTECH Energy', icon: '⚡', color: '#059669', bg: '#ECFDF5', border: '#6EE7B7' },
@@ -18,7 +20,6 @@ const DAY_NAMES   = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 const fmt = d => d.toISOString().split('T')[0];
 
-// Parsea fecha/hora directamente del string ISO sin conversión de zona horaria
 function parseFechaHora(iso) {
   if (!iso) return { fecha: null, hora: null };
   const [datePart, timePart] = iso.split('T');
@@ -28,9 +29,7 @@ function parseFechaHora(iso) {
   let hora = null;
   if (timePart && timePart !== '00:00:00' && timePart !== '00:00:00.000Z') {
     const [h, min] = timePart.split(':').map(Number);
-    const suffix = h >= 12 ? 'pm' : 'am';
-    const h12 = h % 12 || 12;
-    hora = `${h12}:${String(min).padStart(2,'0')}${suffix}`;
+    hora = `${h % 12 || 12}:${String(min).padStart(2,'0')}${h >= 12 ? 'pm' : 'am'}`;
   }
   return { fecha, hora };
 }
@@ -54,23 +53,72 @@ function taskCoversDay(task, ds) {
   return end ? (ds >= start && ds <= end) : start === ds;
 }
 
-const EMPTY_FORM = { titulo: '', zona: 'electrolineras', prioridad: 'media', fecha: '', hora: '', fecha_fin: '', notas: '' };
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
+}
+
+const EMPTY_FORM = { titulo: '', zona: 'electrolineras', prioridad: 'media', fecha: '', hora: '', fecha_fin: '', notas: '', remind_minutes: '' };
 
 export default function Dashboard() {
-  const [tasks,     setTasks]     = useState([]);
-  const [zone,      setZone]      = useState('all');
-  const [selDay,    setSelDay]    = useState(null);
-  const [calView,   setCalView]   = useState('week');
-  const [calRef,    setCalRef]    = useState(new Date());
-  const [showAdd,   setShowAdd]   = useState(false);
-  const [form,      setForm]      = useState(EMPTY_FORM);
-  const [saving,    setSaving]    = useState(false);
-  const [fb,        setFb]        = useState(null);
-  const [loading,   setLoading]   = useState(true);
-  const [editingId, setEditingId] = useState(null);
-  const [editForm,  setEditForm]  = useState({ fecha: '', hora: '', fecha_fin: '', notas: '' });
+  const [tasks,      setTasks]      = useState([]);
+  const [zone,       setZone]       = useState('all');
+  const [selDay,     setSelDay]     = useState(null);
+  const [calView,    setCalView]    = useState('week');
+  const [calRef,     setCalRef]     = useState(new Date());
+  const [showAdd,    setShowAdd]    = useState(false);
+  const [form,       setForm]       = useState(EMPTY_FORM);
+  const [saving,     setSaving]     = useState(false);
+  const [fb,         setFb]         = useState(null);
+  const [loading,    setLoading]    = useState(true);
+  const [editingId,  setEditingId]  = useState(null);
+  const [editForm,   setEditForm]   = useState({ fecha: '', hora: '', fecha_fin: '', notas: '', remind_minutes: '' });
+  const [notifStatus, setNotifStatus] = useState('idle'); // idle | asking | granted | denied
 
   const TODAY = fmt(new Date());
+
+  // Register service worker + subscribe to push
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    navigator.serviceWorker.register('/sw.js').then(async reg => {
+      const existing = await reg.pushManager.getSubscription();
+      if (existing) { setNotifStatus('granted'); return; }
+      if (Notification.permission === 'granted') {
+        await subscribePush(reg);
+      } else if (Notification.permission !== 'denied') {
+        setNotifStatus('asking');
+      }
+    }).catch(() => {});
+  }, []);
+
+  const subscribePush = async (reg) => {
+    try {
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC)
+      });
+      await fetch('/api/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription: sub })
+      });
+      setNotifStatus('granted');
+    } catch (e) {
+      setNotifStatus('denied');
+    }
+  };
+
+  const requestNotifPermission = async () => {
+    const perm = await Notification.requestPermission();
+    if (perm === 'granted') {
+      const reg = await navigator.serviceWorker.ready;
+      await subscribePush(reg);
+    } else {
+      setNotifStatus('denied');
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -92,7 +140,7 @@ export default function Dashboard() {
     const res = await fetch('/api/tareas', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ titulo: form.titulo, zona: form.zona, prioridad: form.prioridad, fecha_hora, fecha_fin, notas: form.notas || null })
+      body: JSON.stringify({ titulo: form.titulo, zona: form.zona, prioridad: form.prioridad, fecha_hora, fecha_fin, notas: form.notas || null, remind_minutes: form.remind_minutes ? parseInt(form.remind_minutes) : null })
     });
     if (res.ok) { flash('ok', 'Tarea agregada.'); setForm(EMPTY_FORM); setShowAdd(false); load(); }
     else flash('err', 'Error al guardar.');
@@ -106,16 +154,17 @@ export default function Dashboard() {
       hora:      (() => { const tp = task.fecha_hora?.split('T')[1]; return tp && tp !== '00:00:00' ? tp.slice(0,5) : ''; })(),
       fecha_fin: task.fecha_fin?.split('T')[0]  || '',
       notas:     task.notas || '',
+      remind_minutes: task.remind_minutes ?? '',
     });
   };
 
   const handleEditSave = async (id) => {
-    const { fecha, hora, fecha_fin, notas } = editForm;
+    const { fecha, hora, fecha_fin, notas, remind_minutes } = editForm;
     const fecha_hora = fecha ? (hora ? `${fecha}T${hora}:00` : `${fecha}T00:00:00`) : null;
     await fetch('/api/tareas', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, fecha_hora, fecha_fin: fecha_fin ? `${fecha_fin}T00:00:00` : null, notas: notas || null })
+      body: JSON.stringify({ id, fecha_hora, fecha_fin: fecha_fin ? `${fecha_fin}T00:00:00` : null, notas: notas || null, remind_minutes: remind_minutes ? parseInt(remind_minutes) : null })
     });
     setEditingId(null); load(); flash('ok', 'Tarea actualizada.');
   };
@@ -160,6 +209,15 @@ export default function Dashboard() {
     <div style={S.root}>
       <style>{CSS}</style>
 
+      {/* NOTIF BANNER */}
+      {notifStatus === 'asking' && (
+        <div style={S.notifBanner}>
+          <span>🔔 Activa las notificaciones para recibir recordatorios en tu iPhone</span>
+          <button onClick={requestNotifPermission} style={S.notifBtn}>Activar</button>
+          <button onClick={() => setNotifStatus('idle')} style={S.notifDismiss}>✕</button>
+        </div>
+      )}
+
       {/* HEADER */}
       <div style={S.header}>
         <div>
@@ -168,6 +226,7 @@ export default function Dashboard() {
         </div>
         <div style={S.hRight}>
           {overdue.length > 0 && <span style={{...S.chip,background:'#FEF2F2',color:'#DC2626',border:'1px solid #FECACA'}}>⚠ {overdue.length} vencidas</span>}
+          {notifStatus === 'granted' && <span style={{...S.chip,background:'#ECFDF5',color:'#059669',border:'1px solid #6EE7B7'}}>🔔 Notif. ON</span>}
           <a href="https://t.me/controltower_pipe_bot" target="_blank" style={S.tgBtn}>✈ Bot</a>
           <button style={S.addBtn} onClick={() => setShowAdd(true)}>+ Nueva</button>
         </div>
@@ -239,16 +298,16 @@ export default function Dashboard() {
         {selDay && <button onClick={() => setSelDay(null)} style={S.clearDay}>✕ Ver todas las tareas</button>}
       </div>
 
-      {/* MOSAIC GRID */}
+      {/* MOSAIC */}
       {loading && <div style={S.empty}>Cargando tareas...</div>}
       {!loading && visible.length === 0 && (
         <div style={S.empty}>{selDay ? `Sin tareas el ${selDay}.` : 'Sin tareas. Agrega una arriba o desde Telegram.'}</div>
       )}
       <div style={S.mosaic}>
         {visible.map(t => {
-          const z    = ZONES[t.zona]    || ZONES.personal;
-          const p    = PRIO[t.prioridad] || PRIO.media;
-          const ds   = t.fecha_hora?.split('T')[0];
+          const z = ZONES[t.zona] || ZONES.personal;
+          const p = PRIO[t.prioridad] || PRIO.media;
+          const ds = t.fecha_hora?.split('T')[0];
           const isOver   = ds && ds < TODAY && t.estado !== 'hecho';
           const isToday2 = ds === TODAY && t.estado !== 'hecho';
           const done     = t.estado === 'hecho';
@@ -258,55 +317,40 @@ export default function Dashboard() {
           const { fecha: fFinLabel } = parseFechaHora(t.fecha_fin);
 
           return (
-            <div key={t.id} className="tc" style={{
-              ...S.card,
-              opacity: done ? 0.45 : 1,
-              borderTop: `3px solid ${done ? '#E2E8F0' : z.color}`,
-            }}>
-              {/* CARD HEADER */}
+            <div key={t.id} style={{ ...S.card, opacity: done?0.45:1, borderTop: `3px solid ${done?'#E2E8F0':z.color}` }}>
               <div style={S.cardHead}>
-                <span style={{...S.tag, background: z.bg, color: z.color, border: `1px solid ${z.border}`}}>{z.icon} {z.label}</span>
-                <span style={{...S.tag, background: p.bg, color: p.color, border: `1px solid ${p.border}`}}>● {p.label}</span>
+                <span style={{...S.tag,background:z.bg,color:z.color,border:`1px solid ${z.border}`}}>{z.icon} {z.label}</span>
+                <span style={{...S.tag,background:p.bg,color:p.color,border:`1px solid ${p.border}`}}>● {p.label}</span>
+                {t.remind_minutes && <span style={{...S.tag,background:'#F5F3FF',color:'#7C3AED',border:'1px solid #C4B5FD'}}>🔔 {t.remind_minutes}min</span>}
               </div>
-
-              {/* TITLE */}
-              <div style={{...S.taskTitle, textDecoration: done?'line-through':'none', color: done?'#94A3B8':'#1E293B'}}>
-                {t.titulo}
-              </div>
-
-              {/* FECHA */}
+              <div style={{...S.taskTitle,textDecoration:done?'line-through':'none',color:done?'#94A3B8':'#1E293B'}}>{t.titulo}</div>
               {fLabel && (
-                <div style={{...S.dateChip, background: isOver?'#FEF2F2':isToday2?'#FFFBEB':'#F8FAFC', color: isOver?'#DC2626':isToday2?'#D97706':'#475569', border:`1px solid ${isOver?'#FECACA':isToday2?'#FDE68A':'#E2E8F0'}`}}>
-                  {isOver ? '⚠ ' : isToday2 ? '⏰ ' : '📅 '}
-                  {fLabel}{hLabel ? ` · ${hLabel}` : ''}
-                  {hasRange && ` → ${fFinLabel}`}
+                <div style={{...S.dateChip,background:isOver?'#FEF2F2':isToday2?'#FFFBEB':'#F8FAFC',color:isOver?'#DC2626':isToday2?'#D97706':'#475569',border:`1px solid ${isOver?'#FECACA':isToday2?'#FDE68A':'#E2E8F0'}`}}>
+                  {isOver?'⚠ ':isToday2?'⏰ ':'📅 '}{fLabel}{hLabel?` · ${hLabel}`:''}{hasRange?` → ${fFinLabel}`:''}
                 </div>
               )}
+              {t.notas && !isEditing && <div style={S.notes}>{t.notas}</div>}
 
-              {/* NOTAS */}
-              {t.notas && !isEditing && (
-                <div style={S.notes}>{t.notas}</div>
-              )}
-
-              {/* EDIT PANEL */}
               {isEditing && (
                 <div style={S.editPanel}>
                   <div style={S.editLabel}>Descripción</div>
-                  <textarea value={editForm.notas} onChange={e => setEditForm({...editForm,notas:e.target.value})}
-                    placeholder="Notas o descripción..." style={{...S.editField,minHeight:60,resize:'vertical',marginBottom:8}}/>
+                  <textarea value={editForm.notas} onChange={e => setEditForm({...editForm,notas:e.target.value})} placeholder="Notas..." style={{...S.editField,minHeight:55,resize:'vertical',marginBottom:8}}/>
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
-                    <div>
-                      <div style={S.editLabel}>Fecha inicio</div>
-                      <input type="date" value={editForm.fecha} onChange={e => setEditForm({...editForm,fecha:e.target.value})} style={S.editField}/>
-                    </div>
-                    <div>
-                      <div style={S.editLabel}>Hora</div>
-                      <input type="time" value={editForm.hora} onChange={e => setEditForm({...editForm,hora:e.target.value})} style={S.editField}/>
-                    </div>
+                    <div><div style={S.editLabel}>Fecha inicio</div><input type="date" value={editForm.fecha} onChange={e => setEditForm({...editForm,fecha:e.target.value})} style={S.editField}/></div>
+                    <div><div style={S.editLabel}>Hora</div><input type="time" value={editForm.hora} onChange={e => setEditForm({...editForm,hora:e.target.value})} style={S.editField}/></div>
                   </div>
+                  <div style={{marginTop:6}}><div style={S.editLabel}>Fecha fin</div><input type="date" value={editForm.fecha_fin} onChange={e => setEditForm({...editForm,fecha_fin:e.target.value})} style={S.editField}/></div>
                   <div style={{marginTop:6}}>
-                    <div style={S.editLabel}>Fecha fin (rango)</div>
-                    <input type="date" value={editForm.fecha_fin} onChange={e => setEditForm({...editForm,fecha_fin:e.target.value})} style={S.editField}/>
+                    <div style={S.editLabel}>🔔 Recordatorio (minutos antes)</div>
+                    <select value={editForm.remind_minutes} onChange={e => setEditForm({...editForm,remind_minutes:e.target.value})} style={S.editField}>
+                      <option value="">Sin recordatorio</option>
+                      <option value="10">10 minutos antes</option>
+                      <option value="15">15 minutos antes</option>
+                      <option value="30">30 minutos antes</option>
+                      <option value="60">1 hora antes</option>
+                      <option value="120">2 horas antes</option>
+                      <option value="1440">1 día antes</option>
+                    </select>
                   </div>
                   <div style={{display:'flex',gap:6,marginTop:8}}>
                     <button onClick={() => handleEditSave(t.id)} style={S.saveEditBtn}>✓ Guardar</button>
@@ -315,7 +359,6 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {/* FOOTER */}
               <div style={S.cardFooter}>
                 <select value={t.estado} onChange={e => updateEstado(t.id, e.target.value)} style={S.sel}>
                   <option value="pendiente">Pendiente</option>
@@ -323,9 +366,8 @@ export default function Dashboard() {
                   <option value="hecho">✅ Hecho</option>
                 </select>
                 <div style={{display:'flex',gap:4}}>
-                  <button onClick={() => isEditing ? setEditingId(null) : openEdit(t)}
-                    style={{...S.iconBtn, color: isEditing?'#7C3AED':'#94A3B8', background: isEditing?'#F5F3FF':'#F8FAFC'}}>✏</button>
-                  <button className="db" onClick={() => deleteTask(t.id)} style={{...S.iconBtn,color:'#EF4444',background:'#FEF2F2'}}>🗑</button>
+                  <button onClick={() => isEditing ? setEditingId(null) : openEdit(t)} style={{...S.iconBtn,color:isEditing?'#7C3AED':'#94A3B8',background:isEditing?'#F5F3FF':'#F8FAFC'}}>✏</button>
+                  <button onClick={() => deleteTask(t.id)} style={{...S.iconBtn,color:'#EF4444',background:'#FEF2F2'}}>🗑</button>
                 </div>
               </div>
             </div>
@@ -361,8 +403,18 @@ export default function Dashboard() {
                 <div><label style={S.label}>Fecha inicio</label><input type="date" value={form.fecha} onChange={e => setForm({...form,fecha:e.target.value})} style={S.field}/></div>
                 <div><label style={S.label}>Hora</label><input type="time" value={form.hora} onChange={e => setForm({...form,hora:e.target.value})} style={S.field}/></div>
               </div>
-              <label style={S.label}>Fecha fin <span style={{fontWeight:400,color:'#94A3B8'}}>(opcional — para rangos)</span></label>
+              <label style={S.label}>Fecha fin <span style={{fontWeight:400,color:'#94A3B8'}}>(opcional)</span></label>
               <input type="date" value={form.fecha_fin} onChange={e => setForm({...form,fecha_fin:e.target.value})} style={S.field}/>
+              <label style={S.label}>🔔 Recordatorio</label>
+              <select value={form.remind_minutes} onChange={e => setForm({...form,remind_minutes:e.target.value})} style={S.field}>
+                <option value="">Sin recordatorio</option>
+                <option value="10">10 minutos antes</option>
+                <option value="15">15 minutos antes</option>
+                <option value="30">30 minutos antes</option>
+                <option value="60">1 hora antes</option>
+                <option value="120">2 horas antes</option>
+                <option value="1440">1 día antes</option>
+              </select>
               <label style={S.label}>Descripción / Notas</label>
               <textarea value={form.notas} onChange={e => setForm({...form,notas:e.target.value})} placeholder="Detalles, contexto, etc." style={{...S.field,minHeight:70,resize:'vertical'}}/>
               <button onClick={handleAdd} disabled={saving} style={{...S.saveBtn,opacity:saving?0.6:1}}>{saving?'Guardando...':'✓ Guardar tarea'}</button>
@@ -386,6 +438,9 @@ const CSS = `
 
 const S = {
   root:{fontFamily:"'Inter',sans-serif",background:'#F1F5F9',minHeight:'100vh',color:'#1E293B',padding:'20px 16px',maxWidth:1000,margin:'0 auto',display:'flex',flexDirection:'column',gap:14},
+  notifBanner:{background:'#EFF6FF',border:'1px solid #BFDBFE',borderRadius:12,padding:'10px 14px',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'},
+  notifBtn:{background:'#2563EB',border:'none',borderRadius:8,color:'#fff',padding:'6px 14px',fontSize:12,fontWeight:600,fontFamily:'inherit'},
+  notifDismiss:{background:'none',border:'none',color:'#94A3B8',fontSize:16,fontFamily:'inherit'},
   header:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:10},
   logo:{fontSize:20,fontWeight:700,color:'#1E293B',letterSpacing:'-0.02em'},
   sub:{fontSize:11,color:'#94A3B8',marginTop:2,textTransform:'capitalize'},
@@ -397,8 +452,8 @@ const S = {
   zoneGrid:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:8},
   zoneCard:{border:'1px solid',borderRadius:14,padding:'12px 8px',display:'flex',flexDirection:'column',alignItems:'center',gap:4,transition:'all 0.15s',fontFamily:'inherit'},
   zIcon:{fontSize:20},
-  zLabel:{fontSize:9,fontWeight:600,textAlign:'center',lineHeight:1.2,color:'#64748B'},
-  zCount:{fontSize:20,fontWeight:700,color:'#94A3B8'},
+  zLabel:{fontSize:9,fontWeight:600,textAlign:'center',lineHeight:1.2},
+  zCount:{fontSize:20,fontWeight:700},
   cal:{background:'#FFFFFF',borderRadius:16,padding:'14px',boxShadow:'0 1px 4px rgba(0,0,0,0.06)'},
   calTop:{display:'flex',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap'},
   calLabel:{flex:1,textAlign:'center',fontSize:12,fontWeight:600,color:'#475569'},
@@ -411,10 +466,10 @@ const S = {
   clearDay:{marginTop:10,background:'none',border:'1px solid #E2E8F0',borderRadius:8,color:'#64748B',fontSize:11,padding:'5px 12px',fontFamily:'inherit',width:'100%'},
   empty:{color:'#CBD5E1',fontSize:13,textAlign:'center',padding:'40px 20px'},
   mosaic:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:12},
-  card:{background:'#FFFFFF',borderRadius:14,padding:'14px',display:'flex',flexDirection:'column',gap:10,boxShadow:'0 1px 4px rgba(0,0,0,0.06)',transition:'box-shadow 0.15s'},
+  card:{background:'#FFFFFF',borderRadius:14,padding:'14px',display:'flex',flexDirection:'column',gap:10,boxShadow:'0 1px 4px rgba(0,0,0,0.06)'},
   cardHead:{display:'flex',gap:6,flexWrap:'wrap'},
   tag:{fontSize:10,borderRadius:6,padding:'3px 8px',fontWeight:500,whiteSpace:'nowrap'},
-  taskTitle:{fontSize:14,fontWeight:600,lineHeight:1.4,color:'#1E293B'},
+  taskTitle:{fontSize:14,fontWeight:600,lineHeight:1.4},
   dateChip:{fontSize:11,borderRadius:8,padding:'5px 9px',fontWeight:500,display:'inline-flex',alignItems:'center',gap:2,alignSelf:'flex-start'},
   notes:{fontSize:12,color:'#64748B',lineHeight:1.5,background:'#F8FAFC',borderRadius:8,padding:'8px 10px'},
   cardFooter:{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:'auto',paddingTop:4},
