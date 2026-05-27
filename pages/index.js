@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 
-const VAPID_PUBLIC = 'BD1NnKTxkP7R2MjVuw8qUatakSdYmo8jaa-fC-xd_WivA_3_gqh6-1_gGO7621XsSfF73OObjNIcHw_0IApxS00';
-
 const ZONES = {
   all:            { label: 'Todo',             icon: '📋', color: '#64748B', bg: '#F1F5F9', border: '#CBD5E1' },
   electrolineras: { label: 'ASFALTECH Energy', icon: '⚡', color: '#059669', bg: '#ECFDF5', border: '#6EE7B7' },
@@ -53,73 +51,23 @@ function taskCoversDay(task, ds) {
   return end ? (ds >= start && ds <= end) : start === ds;
 }
 
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = window.atob(base64);
-  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
-}
-
-const EMPTY_FORM = { titulo: '', zona: 'electrolineras', prioridad: 'media', fecha: '', hora: '', fecha_fin: '', notas: '', remind_minutes: '' };
+const EMPTY_FORM = { titulo: '', zona: 'electrolineras', prioridad: 'media', fecha: '', hora: '', fecha_fin: '', notas: '' };
 
 export default function Dashboard() {
-  const [tasks,      setTasks]      = useState([]);
-  const [zone,       setZone]       = useState('all');
-  const [selDay,     setSelDay]     = useState(null);
-  const [calView,    setCalView]    = useState('week');
-  const [calRef,     setCalRef]     = useState(new Date());
-  const [showAdd,    setShowAdd]    = useState(false);
-  const [form,       setForm]       = useState(EMPTY_FORM);
-  const [remindMin,  setRemindMin]  = useState('');
-  const [saving,     setSaving]     = useState(false);
-  const [fb,         setFb]         = useState(null);
-  const [loading,    setLoading]    = useState(true);
-  const [editingId,  setEditingId]  = useState(null);
-  const [editForm,   setEditForm]   = useState({ fecha: '', hora: '', fecha_fin: '', notas: '', remind_minutes: '' });
-  const [notifStatus, setNotifStatus] = useState('idle'); // idle | asking | granted | denied
+  const [tasks,     setTasks]     = useState([]);
+  const [zone,      setZone]      = useState('all');
+  const [selDay,    setSelDay]    = useState(null);
+  const [calView,   setCalView]   = useState('week');
+  const [calRef,    setCalRef]    = useState(new Date());
+  const [showAdd,   setShowAdd]   = useState(false);
+  const [form,      setForm]      = useState(EMPTY_FORM);
+  const [saving,    setSaving]    = useState(false);
+  const [fb,        setFb]        = useState(null);
+  const [loading,   setLoading]   = useState(true);
+  const [editingId, setEditingId] = useState(null);
+  const [editForm,  setEditForm]  = useState({ fecha: '', hora: '', fecha_fin: '', notas: '' });
 
   const TODAY = fmt(new Date());
-
-  // Register service worker + subscribe to push
-  useEffect(() => {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-    navigator.serviceWorker.register('/sw.js').then(async reg => {
-      const existing = await reg.pushManager.getSubscription();
-      if (existing) { setNotifStatus('granted'); return; }
-      if (Notification.permission === 'granted') {
-        await subscribePush(reg);
-      } else if (Notification.permission !== 'denied') {
-        setNotifStatus('asking');
-      }
-    }).catch(() => {});
-  }, []);
-
-  const subscribePush = async (reg) => {
-    try {
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC)
-      });
-      await fetch('/api/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscription: sub })
-      });
-      setNotifStatus('granted');
-    } catch (e) {
-      setNotifStatus('denied');
-    }
-  };
-
-  const requestNotifPermission = async () => {
-    const perm = await Notification.requestPermission();
-    if (perm === 'granted') {
-      const reg = await navigator.serviceWorker.ready;
-      await subscribePush(reg);
-    } else {
-      setNotifStatus('denied');
-    }
-  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -141,9 +89,9 @@ export default function Dashboard() {
     const res = await fetch('/api/tareas', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ titulo: form.titulo, zona: form.zona, prioridad: form.prioridad, fecha_hora, fecha_fin, notas: form.notas || null, remind_minutes: remindMin ? parseInt(remindMin) : null })
+      body: JSON.stringify({ titulo: form.titulo, zona: form.zona, prioridad: form.prioridad, fecha_hora, fecha_fin, notas: form.notas || null })
     });
-    if (res.ok) { flash('ok', 'Tarea agregada.'); setForm(EMPTY_FORM); setRemindMin(''); setShowAdd(false); load(); }
+    if (res.ok) { flash('ok', 'Tarea agregada.'); setForm(EMPTY_FORM); setShowAdd(false); load(); }
     else flash('err', 'Error al guardar.');
     setSaving(false);
   };
@@ -155,17 +103,16 @@ export default function Dashboard() {
       hora:      (() => { const tp = task.fecha_hora?.split('T')[1]; return tp && tp !== '00:00:00' ? tp.slice(0,5) : ''; })(),
       fecha_fin: task.fecha_fin?.split('T')[0]  || '',
       notas:     task.notas || '',
-      remind_minutes: task.remind_minutes ?? '',
     });
   };
 
   const handleEditSave = async (id) => {
-    const { fecha, hora, fecha_fin, notas, remind_minutes } = editForm;
+    const { fecha, hora, fecha_fin, notas } = editForm;
     const fecha_hora = fecha ? (hora ? `${fecha}T${hora}:00` : `${fecha}T00:00:00`) : null;
     await fetch('/api/tareas', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, fecha_hora, fecha_fin: fecha_fin ? `${fecha_fin}T00:00:00` : null, notas: notas || null, remind_minutes: remind_minutes ? parseInt(remind_minutes) : null })
+      body: JSON.stringify({ id, fecha_hora, fecha_fin: fecha_fin ? `${fecha_fin}T00:00:00` : null, notas: notas || null })
     });
     setEditingId(null); load(); flash('ok', 'Tarea actualizada.');
   };
@@ -181,9 +128,9 @@ export default function Dashboard() {
     load();
   };
 
-  const pending  = tasks.filter(t => t.estado !== 'hecho');
-  const overdue  = pending.filter(t => t.fecha_hora && t.fecha_hora.split('T')[0] < TODAY);
-  const calDays  = calView === 'week' ? getWeekDays(calRef) : getMonthDays(calRef.getFullYear(), calRef.getMonth());
+  const pending = tasks.filter(t => t.estado !== 'hecho');
+  const overdue = tasks.filter(t => !t.done && t.fecha_hora && t.fecha_hora.split('T')[0] < TODAY && t.estado !== 'hecho');
+  const calDays = calView === 'week' ? getWeekDays(calRef) : getMonthDays(calRef.getFullYear(), calRef.getMonth());
 
   const navCal = dir => {
     const d = new Date(calRef);
@@ -210,16 +157,6 @@ export default function Dashboard() {
     <div style={S.root}>
       <style>{CSS}</style>
 
-      {/* NOTIF BANNER */}
-      {notifStatus === 'asking' && (
-        <div style={S.notifBanner}>
-          <span>🔔 Activa las notificaciones para recibir recordatorios en tu iPhone</span>
-          <button onClick={requestNotifPermission} style={S.notifBtn}>Activar</button>
-          <button onClick={() => setNotifStatus('idle')} style={S.notifDismiss}>✕</button>
-        </div>
-      )}
-
-      {/* HEADER */}
       <div style={S.header}>
         <div>
           <div style={S.logo}>⚡ Control Tower</div>
@@ -227,7 +164,6 @@ export default function Dashboard() {
         </div>
         <div style={S.hRight}>
           {overdue.length > 0 && <span style={{...S.chip,background:'#FEF2F2',color:'#DC2626',border:'1px solid #FECACA'}}>⚠ {overdue.length} vencidas</span>}
-          {notifStatus === 'granted' && <span style={{...S.chip,background:'#ECFDF5',color:'#059669',border:'1px solid #6EE7B7'}}>🔔 Notif. ON</span>}
           <a href="https://t.me/controltower_pipe_bot" target="_blank" style={S.tgBtn}>✈ Bot</a>
           <button style={S.addBtn} onClick={() => setShowAdd(true)}>+ Nueva</button>
         </div>
@@ -235,7 +171,6 @@ export default function Dashboard() {
 
       {fb && <div style={{...S.fb,background:fb.type==='ok'?'#ECFDF5':'#FEF2F2',color:fb.type==='ok'?'#065F46':'#DC2626',border:`1px solid ${fb.type==='ok'?'#6EE7B7':'#FECACA'}`}}>{fb.type==='ok'?'✓ ':'✕ '}{fb.msg}</div>}
 
-      {/* ZONE CARDS */}
       <div style={S.zoneGrid}>
         {Object.entries(ZONES).map(([key, z]) => {
           const cnt = key === 'all' ? pending.length : tasks.filter(t => t.zona === key && t.estado !== 'hecho').length;
@@ -248,14 +183,13 @@ export default function Dashboard() {
               boxShadow:   on ? `0 0 0 2px ${z.color}40` : '0 1px 3px rgba(0,0,0,0.06)',
             }}>
               <div style={S.zIcon}>{z.icon}</div>
-              <div style={{...S.zLabel, color: on ? z.color : '#475569'}}>{z.label}</div>
-              <div style={{...S.zCount, color: on ? z.color : '#94A3B8'}}>{cnt}</div>
+              <div style={{...S.zLabel,color:on?z.color:'#475569'}}>{z.label}</div>
+              <div style={{...S.zCount,color:on?z.color:'#94A3B8'}}>{cnt}</div>
             </button>
           );
         })}
       </div>
 
-      {/* CALENDAR */}
       <div style={S.cal}>
         <div style={S.calTop}>
           <button style={S.nav} onClick={() => navCal(-1)}>‹</button>
@@ -299,11 +233,11 @@ export default function Dashboard() {
         {selDay && <button onClick={() => setSelDay(null)} style={S.clearDay}>✕ Ver todas las tareas</button>}
       </div>
 
-      {/* MOSAIC */}
       {loading && <div style={S.empty}>Cargando tareas...</div>}
       {!loading && visible.length === 0 && (
         <div style={S.empty}>{selDay ? `Sin tareas el ${selDay}.` : 'Sin tareas. Agrega una arriba o desde Telegram.'}</div>
       )}
+
       <div style={S.mosaic}>
         {visible.map(t => {
           const z = ZONES[t.zona] || ZONES.personal;
@@ -318,41 +252,32 @@ export default function Dashboard() {
           const { fecha: fFinLabel } = parseFechaHora(t.fecha_fin);
 
           return (
-            <div key={t.id} style={{ ...S.card, opacity: done?0.45:1, borderTop: `3px solid ${done?'#E2E8F0':z.color}` }}>
+            <div key={t.id} style={{...S.card, opacity: done?0.45:1, borderTop:`3px solid ${done?'#E2E8F0':z.color}`}}>
               <div style={S.cardHead}>
                 <span style={{...S.tag,background:z.bg,color:z.color,border:`1px solid ${z.border}`}}>{z.icon} {z.label}</span>
                 <span style={{...S.tag,background:p.bg,color:p.color,border:`1px solid ${p.border}`}}>● {p.label}</span>
-                {t.remind_minutes && <span style={{...S.tag,background:'#F5F3FF',color:'#7C3AED',border:'1px solid #C4B5FD'}}>🔔 {t.remind_minutes}min</span>}
               </div>
+
               <div style={{...S.taskTitle,textDecoration:done?'line-through':'none',color:done?'#94A3B8':'#1E293B'}}>{t.titulo}</div>
+
               {fLabel && (
                 <div style={{...S.dateChip,background:isOver?'#FEF2F2':isToday2?'#FFFBEB':'#F8FAFC',color:isOver?'#DC2626':isToday2?'#D97706':'#475569',border:`1px solid ${isOver?'#FECACA':isToday2?'#FDE68A':'#E2E8F0'}`}}>
                   {isOver?'⚠ ':isToday2?'⏰ ':'📅 '}{fLabel}{hLabel?` · ${hLabel}`:''}{hasRange?` → ${fFinLabel}`:''}
                 </div>
               )}
+
               {t.notas && !isEditing && <div style={S.notes}>{t.notas}</div>}
 
               {isEditing && (
                 <div style={S.editPanel}>
                   <div style={S.editLabel}>Descripción</div>
-                  <textarea value={editForm.notas} onChange={e => setEditForm({...editForm,notas:e.target.value})} placeholder="Notas..." style={{...S.editField,minHeight:55,resize:'vertical',marginBottom:8}}/>
+                  <textarea value={editForm.notas} onChange={e => setEditForm({...editForm,notas:e.target.value})}
+                    placeholder="Notas..." style={{...S.editField,minHeight:55,resize:'vertical',marginBottom:8}}/>
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
                     <div><div style={S.editLabel}>Fecha inicio</div><input type="date" value={editForm.fecha} onChange={e => setEditForm({...editForm,fecha:e.target.value})} style={S.editField}/></div>
                     <div><div style={S.editLabel}>Hora</div><input type="time" value={editForm.hora} onChange={e => setEditForm({...editForm,hora:e.target.value})} style={S.editField}/></div>
                   </div>
                   <div style={{marginTop:6}}><div style={S.editLabel}>Fecha fin</div><input type="date" value={editForm.fecha_fin} onChange={e => setEditForm({...editForm,fecha_fin:e.target.value})} style={S.editField}/></div>
-                  <div style={{marginTop:6}}>
-                    <div style={S.editLabel}>🔔 Recordatorio (minutos antes)</div>
-                    <select value={remindMin} onChange={e => setRemindMin(e.target.value)} style={S.field}>
-                      <option value="">Sin recordatorio</option>
-                      <option value="10">10 minutos antes</option>
-                      <option value="15">15 minutos antes</option>
-                      <option value="30">30 minutos antes</option>
-                      <option value="60">1 hora antes</option>
-                      <option value="120">2 horas antes</option>
-                      <option value="1440">1 día antes</option>
-                  </select>
-                  </div>
                   <div style={{display:'flex',gap:6,marginTop:8}}>
                     <button onClick={() => handleEditSave(t.id)} style={S.saveEditBtn}>✓ Guardar</button>
                     <button onClick={() => setEditingId(null)} style={S.clearEditBtn}>Cancelar</button>
@@ -376,7 +301,6 @@ export default function Dashboard() {
         })}
       </div>
 
-      {/* ADD MODAL */}
       {showAdd && (
         <div style={S.overlay} onClick={e => e.target===e.currentTarget && setShowAdd(false)}>
           <div style={S.modal}>
@@ -406,19 +330,6 @@ export default function Dashboard() {
               </div>
               <label style={S.label}>Fecha fin <span style={{fontWeight:400,color:'#94A3B8'}}>(opcional)</span></label>
               <input type="date" value={form.fecha_fin} onChange={e => setForm({...form,fecha_fin:e.target.value})} style={S.field}/>
-              <label style={S.label}>🔔 Recordatorio</label>
-              <select value={form.remind_minutes || ''} onChange={e => {
-                const val = e.target.value;
-                setForm(prev => ({...prev, remind_minutes: val}));
-              }} style={S.field}>
-                <option value="">Sin recordatorio</option>
-                <option value="10">10 minutos antes</option>
-                <option value="15">15 minutos antes</option>
-                <option value="30">30 minutos antes</option>
-                <option value="60">1 hora antes</option>
-                <option value="120">2 horas antes</option>
-                <option value="1440">1 día antes</option>
-              </select>
               <label style={S.label}>Descripción / Notas</label>
               <textarea value={form.notas} onChange={e => setForm({...form,notas:e.target.value})} placeholder="Detalles, contexto, etc." style={{...S.field,minHeight:70,resize:'vertical'}}/>
               <button onClick={handleAdd} disabled={saving} style={{...S.saveBtn,opacity:saving?0.6:1}}>{saving?'Guardando...':'✓ Guardar tarea'}</button>
@@ -442,9 +353,6 @@ const CSS = `
 
 const S = {
   root:{fontFamily:"'Inter',sans-serif",background:'#F1F5F9',minHeight:'100vh',color:'#1E293B',padding:'20px 16px',maxWidth:1000,margin:'0 auto',display:'flex',flexDirection:'column',gap:14},
-  notifBanner:{background:'#EFF6FF',border:'1px solid #BFDBFE',borderRadius:12,padding:'10px 14px',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'},
-  notifBtn:{background:'#2563EB',border:'none',borderRadius:8,color:'#fff',padding:'6px 14px',fontSize:12,fontWeight:600,fontFamily:'inherit'},
-  notifDismiss:{background:'none',border:'none',color:'#94A3B8',fontSize:16,fontFamily:'inherit'},
   header:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:10},
   logo:{fontSize:20,fontWeight:700,color:'#1E293B',letterSpacing:'-0.02em'},
   sub:{fontSize:11,color:'#94A3B8',marginTop:2,textTransform:'capitalize'},
@@ -492,5 +400,7 @@ const S = {
   mBody:{padding:'16px 20px',display:'flex',flexDirection:'column',gap:12},
   label:{fontSize:11,fontWeight:600,color:'#64748B'},
   field:{width:'100%',background:'#F8FAFC',border:'1px solid #E2E8F0',borderRadius:10,padding:'10px 12px',color:'#1E293B',fontSize:13,fontFamily:'inherit',outline:'none'},
+  saveBtn:{background:'#1E293B',border:'none',borderRadius:12,color:'#fff',padding:'13px',fontSize:14,fontWeight:600,fontFamily:'inherit',width:'100%',marginTop:4},
+};
   saveBtn:{background:'#1E293B',border:'none',borderRadius:12,color:'#fff',padding:'13px',fontSize:14,fontWeight:600,fontFamily:'inherit',width:'100%',marginTop:4},
 };
